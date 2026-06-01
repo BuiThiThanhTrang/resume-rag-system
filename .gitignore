@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.env
+runtime_outputs/
+runtime_test_dir/
+vector_db/store/
+resume_reader/
+streamlit_*.log
+streamlit_*.err

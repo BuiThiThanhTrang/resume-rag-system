@@ -1,0 +1,23 @@
+{
+  "file_name": "18067556.pdf",
+  "domain": "INFORMATION-TECHNOLOGY",
+  "candidate_name": null,
+  "email": null,
+  "phone": null,
+  "skills": [
+    "aws",
+    "azure",
+    "data analysis",
+    "etl",
+    "excel",
+    "finance",
+    "linux",
+    "python",
+    "risk",
+    "sql",
+    "tableau"
+  ],
+  "education": [],
+  "experience": [],
+  "summary": "MASTER DATA MANAGER Experience Master Data Manager , 01/2019 to Current Company Name â€“ City , State Aligning 100+ supply chain-related master data attributes to ensure the following guidelines are met:. Data Stewardship - Appropriate business units and ownership established to validate appropriate values, definitions and impact documentation for all master data fields. Data Quality - Applicable controls are set in conjecture with IT to ensure that a proactive approach is taken to new master data. Additionally, RPA process planned for Phase 2 to automate structured data entry and maintenance. Data Integrity/Data Warehousing - Structure business logic to ensure BOMs and other data relationships are both accessible and built as an asset for the business. Additionally, a Data Sync SOP was established for GS1 standardization. Reporting - Automate data quality reporting for executive staff t"
+}
