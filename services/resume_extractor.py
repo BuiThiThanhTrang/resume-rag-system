@@ -2,9 +2,11 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+ExtractionMode = Literal["rule_based", "openai", "langchain_openai"]
 
 
 EMAIL_RE = re.compile(r"[\w.\-+]+@[\w.\-]+\.\w+")
@@ -31,12 +33,23 @@ class ResumeProfile(BaseModel):
 
 
 class ResumeExtractor:
-    def extract(self, text: str, file_name: str, domain: str, use_llm: bool = False) -> Dict[str, Any]:
-        if use_llm and os.getenv("OPENAI_API_KEY"):
+    def extract(self, text: str, file_name: str, domain: str, mode: ExtractionMode = "rule_based") -> Dict[str, Any]:
+        if mode == "openai" and os.getenv("OPENAI_API_KEY"):
             llm_result = self._extract_with_openai(text, file_name, domain)
             if llm_result:
+                llm_result["requested_extraction_mode"] = mode
+                llm_result["actual_extraction_engine"] = "openai"
                 return llm_result
-        return self._extract_with_rules(text, file_name, domain).model_dump()
+        if mode == "langchain_openai" and os.getenv("OPENAI_API_KEY"):
+            llm_result = self._extract_with_langchain(text, file_name, domain)
+            if llm_result:
+                llm_result["requested_extraction_mode"] = mode
+                llm_result["actual_extraction_engine"] = "langchain_openai"
+                return llm_result
+        payload = self._extract_with_rules(text, file_name, domain).model_dump()
+        payload["requested_extraction_mode"] = mode
+        payload["actual_extraction_engine"] = "rule_based"
+        return payload
 
     def _extract_with_rules(self, text: str, file_name: str, domain: str) -> ResumeProfile:
         lines = [line.strip() for line in re.split(r"[\n\r]+| {2,}", text) if line.strip()]
@@ -111,3 +124,24 @@ class ResumeExtractor:
         except Exception:
             return None
 
+    def _extract_with_langchain(self, text: str, file_name: str, domain: str) -> Optional[Dict[str, Any]]:
+        try:
+            from langchain_core.output_parsers import JsonOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+            from langchain_openai import ChatOpenAI
+
+            system_prompt = Path("prompts/extraction_prompt.txt").read_text(encoding="utf-8")
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", system_prompt),
+                    ("human", "File: {file_name}\nDomain: {domain}\nResume text:\n{text}"),
+                ]
+            )
+            llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), temperature=0)
+            chain = prompt | llm | JsonOutputParser()
+            payload = chain.invoke({"file_name": file_name, "domain": domain, "text": text[:12000]})
+            payload.setdefault("file_name", file_name)
+            payload.setdefault("domain", domain)
+            return payload
+        except Exception:
+            return None

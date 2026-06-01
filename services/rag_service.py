@@ -2,8 +2,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from config import CHUNK_OVERLAP, CHUNK_SIZE, EXTRACTED_JSON_DIR, RAW_DATA_DIR, VECTOR_DB_DIR
+from services.monitoring import PipelineMonitor
 from services.pdf_service import PdfService
-from services.resume_extractor import ResumeExtractor
+from services.resume_extractor import ExtractionMode, ResumeExtractor
 from utils.file_utils import iter_pdf_files, read_json, write_json
 from utils.text_utils import chunk_text
 from vector_db.simple_store import SearchResult, SimpleVectorStore
@@ -14,44 +15,71 @@ class ResumeRagService:
         self.pdf_service = PdfService()
         self.extractor = ResumeExtractor()
         self.store = SimpleVectorStore(VECTOR_DB_DIR)
+        self.monitor = PipelineMonitor()
+        self.phoenix_status = self.monitor.phoenix.setup()
 
-    def ingest(self, domains: Iterable[str], max_files_per_domain: int = 50, use_llm: bool = False) -> Dict[str, int]:
+    def ingest(
+        self,
+        domains: Iterable[str],
+        max_files_per_domain: int = 50,
+        extraction_mode: ExtractionMode = "rule_based",
+    ) -> Dict[str, int]:
         chunks: List[Dict[str, object]] = []
         processed = 0
         failed = 0
-        for pdf_path in self._limited_files(domains, max_files_per_domain):
-            domain = pdf_path.parent.name
-            try:
-                text = self.pdf_service.extract_text(pdf_path)
-                profile = self.extractor.extract(text, pdf_path.name, domain, use_llm=use_llm)
-                json_path = EXTRACTED_JSON_DIR / domain / f"{pdf_path.stem}.json"
-                write_json(json_path, profile)
-                for chunk_index, chunk in enumerate(chunk_text(text, CHUNK_SIZE, CHUNK_OVERLAP)):
-                    chunks.append(
-                        {
-                            "text": chunk,
-                            "metadata": {
-                                "file_name": pdf_path.name,
-                                "domain": domain,
-                                "chunk": str(chunk_index),
-                                "json_path": str(json_path),
-                            },
-                        }
-                    )
-                processed += 1
-            except Exception:
-                failed += 1
-        self.store.build(chunks)
+        with self.monitor.track("ingest_batch", domains=list(domains), extraction_mode=extraction_mode) as batch_event:
+            for pdf_path in self._limited_files(domains, max_files_per_domain):
+                domain = pdf_path.parent.name
+                try:
+                    with self.monitor.track(
+                        "extract_resume",
+                        file_name=pdf_path.name,
+                        domain=domain,
+                        extraction_mode=extraction_mode,
+                        framework=self._framework_name(extraction_mode),
+                    ) as event:
+                        text = self.pdf_service.extract_text(pdf_path)
+                        profile = self.extractor.extract(text, pdf_path.name, domain, mode=extraction_mode)
+                        json_path = EXTRACTED_JSON_DIR / domain / f"{pdf_path.stem}.json"
+                        write_json(json_path, profile)
+                        event["text_chars"] = len(text)
+                        event["skills_count"] = len(profile.get("skills", []))
+                        event["has_email"] = bool(profile.get("email"))
+                        event["actual_extraction_engine"] = profile.get("actual_extraction_engine")
+                        event["json_path"] = str(json_path)
+                    for chunk_index, chunk in enumerate(chunk_text(text, CHUNK_SIZE, CHUNK_OVERLAP)):
+                        chunks.append(
+                            {
+                                "text": chunk,
+                                "metadata": {
+                                    "file_name": pdf_path.name,
+                                    "domain": domain,
+                                    "chunk": str(chunk_index),
+                                    "json_path": str(json_path),
+                                },
+                            }
+                        )
+                    processed += 1
+                except Exception:
+                    failed += 1
+            self.store.build(chunks)
+            batch_event["processed"] = processed
+            batch_event["failed"] = failed
+            batch_event["chunks"] = len(chunks)
         return {"processed": processed, "failed": failed, "chunks": len(chunks)}
 
     def ask(self, query: str, top_k: int = 5) -> Dict[str, object]:
         if not self.store.documents:
             self.store.load()
-        results = self.store.search(query, top_k=top_k)
-        return {
-            "answer": self._compose_answer(query, results),
-            "sources": [result.__dict__ for result in results],
-        }
+        with self.monitor.track("rag_query", top_k=top_k, query=query) as event:
+            response = self._run_langchain_rag(query, top_k=top_k)
+            results = response["raw_results"]
+            event["results"] = len(results)
+            event["top_score"] = round(results[0].score, 4) if results else 0
+            return {
+                "answer": response["answer"],
+                "sources": [result.__dict__ for result in results],
+            }
 
     def list_profiles(self, domain: str | None = None) -> List[Dict[str, object]]:
         root = EXTRACTED_JSON_DIR if domain is None else EXTRACTED_JSON_DIR / domain
@@ -75,3 +103,26 @@ class ResumeRagService:
             lines.append(f"{index}. {meta.get('file_name')} ({meta.get('domain')}) - score {result.score:.3f}: {snippet}")
         return "\n".join(lines)
 
+    def _run_langchain_rag(self, query: str, top_k: int) -> Dict[str, object]:
+        try:
+            from langchain_core.runnables import RunnableLambda
+
+            retrieve = RunnableLambda(lambda user_query: self.store.search(user_query, top_k=top_k))
+            compose = RunnableLambda(
+                lambda results: {
+                    "answer": self._compose_answer(query, results),
+                    "raw_results": results,
+                }
+            )
+            chain = retrieve | compose
+            return chain.invoke(query)
+        except Exception:
+            results = self.store.search(query, top_k=top_k)
+            return {"answer": self._compose_answer(query, results), "raw_results": results}
+
+    def _framework_name(self, extraction_mode: ExtractionMode) -> str:
+        if extraction_mode == "langchain_openai":
+            return "LangChain + OpenAI"
+        if extraction_mode == "openai":
+            return "OpenAI SDK"
+        return "Python rules"
