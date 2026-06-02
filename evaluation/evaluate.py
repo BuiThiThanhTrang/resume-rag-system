@@ -7,6 +7,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from utils.env_loader import load_project_env
+
+load_project_env(ROOT_DIR)
+
 from services.rag_service import ResumeRagService
 
 

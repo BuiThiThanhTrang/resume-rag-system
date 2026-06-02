@@ -3,7 +3,10 @@ __pycache__/
 .env
 runtime_outputs/
 runtime_test_dir/
+extracted_json/**/*.json
 vector_db/store/
 resume_reader/
 streamlit_*.log
 streamlit_*.err
+node_modules/
+frontend/node_modules/

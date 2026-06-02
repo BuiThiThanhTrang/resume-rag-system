@@ -39,3 +39,10 @@ pydantic
 tiktoken
 Pillow
 numpy
+arize-phoenix
+openinference-instrumentation-langchain
+openinference-instrumentation-openai
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+fastapi
+uvicorn

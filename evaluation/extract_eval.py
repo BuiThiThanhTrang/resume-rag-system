@@ -13,6 +13,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from utils.env_loader import load_project_env
+
+load_project_env(ROOT_DIR)
+
 from config import ALLOWED_DOMAINS, RAW_DATA_DIR
 from services.pdf_service import PdfService
 from services.resume_extractor import ExtractionMode, ResumeExtractor
